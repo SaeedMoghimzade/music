@@ -49,10 +49,10 @@ const App: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Derived state
+  // Derived state (moved up to be accessible everywhere)
   const filteredSongs = songs.filter(s => 
     s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    s.artist.toLowerCase().includes(searchQuery.toLowerCase())
+    (s.artist && s.artist.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   const displaySongs = currentView === View.PLAYLIST_DETAIL && selectedPlaylistId
@@ -64,12 +64,16 @@ const App: React.FC = () => {
   }, []);
 
   const loadData = async () => {
-    const loadedSongs = await dbService.getAllSongs();
-    const loadedPlaylists = await dbService.getPlaylists();
-    const loadedFolders = await dbService.getFolders();
-    setSongs(loadedSongs);
-    setPlaylists(loadedPlaylists);
-    setFolders(loadedFolders);
+    try {
+      const loadedSongs = await dbService.getAllSongs();
+      const loadedPlaylists = await dbService.getPlaylists();
+      const loadedFolders = await dbService.getFolders();
+      setSongs(loadedSongs || []);
+      setPlaylists(loadedPlaylists || []);
+      setFolders(loadedFolders || []);
+    } catch (err) {
+      console.error("Failed to load initial data:", err);
+    }
   };
 
   const handleAddFolder = () => {
@@ -83,53 +87,65 @@ const App: React.FC = () => {
     if (!files || files.length === 0) return;
 
     setIsScanning(true);
-    const folderId = crypto.randomUUID();
-    const folderName = files[0].webkitRelativePath.split('/')[0] || "Local Library";
-    
-    const newFolder: FolderSource = {
-      id: folderId,
-      name: folderName
-    };
-    await dbService.saveFolder(newFolder);
+    try {
+      const folderId = crypto.randomUUID();
+      const folderName = files[0].webkitRelativePath.split('/')[0] || "Local Library";
+      
+      const newFolder: FolderSource = {
+        id: folderId,
+        name: folderName
+      };
+      await dbService.saveFolder(newFolder);
 
-    const newSongs: Song[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (file.type.startsWith('audio/') || file.name.match(/\.(mp3|wav|ogg|m4a|flac)$/i)) {
-        newSongs.push({
-          id: crypto.randomUUID(),
-          name: file.name.replace(/\.[^/.]+$/, ""),
-          fileName: file.name,
-          path: file.webkitRelativePath,
-          artist: 'Unknown Artist',
-          album: 'Local Album',
-          duration: 0,
-          file: file,
-          folderId: folderId
-        });
+      const newSongs: Song[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.type.startsWith('audio/') || file.name.match(/\.(mp3|wav|ogg|m4a|flac)$/i)) {
+          newSongs.push({
+            id: crypto.randomUUID(),
+            name: file.name.replace(/\.[^/.]+$/, ""),
+            fileName: file.name,
+            path: file.webkitRelativePath,
+            artist: 'Unknown Artist',
+            album: 'Local Album',
+            duration: 0,
+            file: file,
+            folderId: folderId
+          });
+        }
       }
-    }
 
-    await dbService.saveSongs(newSongs);
-    await loadData();
-    setIsScanning(false);
-    e.target.value = '';
+      if (newSongs.length > 0) {
+        await dbService.saveSongs(newSongs);
+        await loadData();
+      }
+    } catch (err) {
+      console.error("Error scanning files:", err);
+      alert("Could not index all files. Please try again.");
+    } finally {
+      setIsScanning(false);
+      e.target.value = '';
+    }
   };
 
   const handleCreatePlaylist = async () => {
     if (!newPlaylistName.trim()) return;
     
-    const newPlaylist: Playlist = {
-      id: crypto.randomUUID(),
-      name: newPlaylistName.trim(),
-      songIds: [],
-      createdAt: Date.now()
-    };
-    
-    await dbService.savePlaylist(newPlaylist);
-    await loadData();
-    setNewPlaylistName('');
-    setIsCreatingPlaylist(false);
+    try {
+      const newPlaylist: Playlist = {
+        id: crypto.randomUUID(),
+        name: newPlaylistName.trim(),
+        songIds: [],
+        createdAt: Date.now()
+      };
+      
+      await dbService.savePlaylist(newPlaylist);
+      await loadData();
+      setNewPlaylistName('');
+      setIsCreatingPlaylist(false);
+    } catch (err) {
+      console.error("Failed to create playlist:", err);
+    }
   };
 
   const togglePlay = () => {
@@ -137,7 +153,7 @@ const App: React.FC = () => {
     if (isPlaying) {
       audioRef.current.pause();
     } else {
-      audioRef.current.play();
+      audioRef.current.play().catch(console.error);
     }
     setIsPlaying(!isPlaying);
   };
@@ -148,12 +164,12 @@ const App: React.FC = () => {
       const url = URL.createObjectURL(song.file);
       if (audioRef.current) {
         audioRef.current.src = url;
-        audioRef.current.play();
+        audioRef.current.play().catch(console.error);
         setCurrentSong(song);
         setIsPlaying(true);
       }
     } catch (err) {
-      console.error("Playback error", err);
+      console.error("Playback error:", err);
     }
   };
 
@@ -180,19 +196,27 @@ const App: React.FC = () => {
   };
 
   const addToPlaylist = async (songId: string, playlistId: string) => {
-    const playlist = playlists.find(p => p.id === playlistId);
-    if (playlist && !playlist.songIds.includes(songId)) {
-      playlist.songIds.push(songId);
-      await dbService.savePlaylist(playlist);
-      await loadData();
-      setIsAddingToPlaylist(null);
+    try {
+      const playlist = playlists.find(p => p.id === playlistId);
+      if (playlist && !playlist.songIds.includes(songId)) {
+        playlist.songIds.push(songId);
+        await dbService.savePlaylist(playlist);
+        await loadData();
+        setIsAddingToPlaylist(null);
+      }
+    } catch (err) {
+      console.error("Error adding to playlist:", err);
     }
   };
 
   const removeSongFromLibrary = async (id: string) => {
     if (confirm('Remove this song from your local library?')) {
-      await dbService.deleteSong(id);
-      loadData();
+      try {
+        await dbService.deleteSong(id);
+        await loadData();
+      } catch (err) {
+        console.error("Delete failed:", err);
+      }
     }
   };
 
@@ -212,7 +236,7 @@ const App: React.FC = () => {
       <audio 
         ref={audioRef} 
         onTimeUpdate={() => setProgress(audioRef.current ? (audioRef.current.currentTime / audioRef.current.duration) * 100 : 0)}
-        onEnded={isRepeat ? () => {if(audioRef.current) audioRef.current.currentTime = 0; audioRef.current?.play();} : playNext}
+        onEnded={isRepeat ? () => {if(audioRef.current) { audioRef.current.currentTime = 0; audioRef.current.play().catch(console.error); }} : playNext}
         onVolumeChange={() => setVolume(audioRef.current?.volume || 0.8)}
       />
 
@@ -292,7 +316,7 @@ const App: React.FC = () => {
                     placeholder="Search library..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="bg-white/5 outline-none rounded-2xl py-3.5 pl-12 pr-6 w-full border border-white/10 transition-all backdrop-blur-md"
+                    className="bg-white/5 outline-none rounded-2xl py-3.5 pl-12 pr-6 w-full border border-white/10 transition-all backdrop-blur-md focus:bg-white/10"
                   />
                 </div>
               )}
@@ -301,63 +325,76 @@ const App: React.FC = () => {
             <div className="flex-1 overflow-y-auto px-8 pb-10">
               {currentView === View.LIBRARY || currentView === View.PLAYLIST_DETAIL ? (
                 <div className="space-y-2">
-                  {displaySongs.map((song) => (
-                    <div 
-                      key={song.id} 
-                      onClick={() => playSong(song)}
-                      className={`group flex items-center gap-5 p-4 rounded-3xl cursor-pointer transition-all ${currentSong?.id === song.id ? 'bg-white/20' : 'hover:bg-white/5'}`}
-                    >
-                      <div className="w-14 h-14 glass-dark rounded-2xl flex items-center justify-center flex-shrink-0">
-                        {currentSong?.id === song.id && isPlaying ? (
-                          <div className="flex items-end gap-1 h-5"><div className="w-1 bg-blue-400 animate-[bounce_0.8s_infinite] h-full"></div></div>
-                        ) : <Music size={24} className="text-white/20" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-bold truncate text-lg">{song.name}</h4>
-                        <p className="text-sm text-white/40 truncate">{song.path.split('/').slice(0,-1).join(' / ') || 'Root'}</p>
-                      </div>
-                      <div className="flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-all">
-                        <button onClick={(e) => { e.stopPropagation(); setIsAddingToPlaylist(song.id); }} className="p-3 bg-white/5 hover:bg-blue-500/20 rounded-2xl"><Plus size={20} /></button>
-                        <button onClick={(e) => { e.stopPropagation(); removeSongFromLibrary(song.id); }} className="p-3 bg-white/5 hover:bg-red-500/20 rounded-2xl"><Trash2 size={20} /></button>
-                      </div>
+                  {displaySongs.length === 0 ? (
+                    <div className="py-20 text-center opacity-20">
+                      <Music size={80} className="mx-auto mb-4" />
+                      <p className="text-xl font-bold">No songs found</p>
                     </div>
-                  ))}
+                  ) : (
+                    displaySongs.map((song) => (
+                      <div 
+                        key={song.id} 
+                        onClick={() => playSong(song)}
+                        className={`group flex items-center gap-5 p-4 rounded-3xl cursor-pointer transition-all ${currentSong?.id === song.id ? 'bg-white/20' : 'hover:bg-white/5'}`}
+                      >
+                        <div className="w-14 h-14 glass-dark rounded-2xl flex items-center justify-center flex-shrink-0 relative overflow-hidden shadow-lg border border-white/10">
+                          {currentSong?.id === song.id && isPlaying ? (
+                            <div className="flex items-end gap-1 h-5"><div className="w-1 bg-blue-400 animate-[bounce_0.8s_infinite] h-full"></div></div>
+                          ) : <Music size={24} className="text-white/20 group-hover:text-blue-400/50 transition-colors" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-bold truncate text-lg">{song.name}</h4>
+                          <p className="text-sm text-white/40 truncate">{song.path.split('/').slice(0,-1).join(' / ') || 'Root'}</p>
+                        </div>
+                        <div className="flex items-center gap-3 md:opacity-0 group-hover:opacity-100 transition-all">
+                          <button onClick={(e) => { e.stopPropagation(); setIsAddingToPlaylist(song.id); }} className="p-3 bg-white/5 hover:bg-blue-500/20 rounded-2xl transition-colors"><Plus size={20} /></button>
+                          <button onClick={(e) => { e.stopPropagation(); removeSongFromLibrary(song.id); }} className="p-3 bg-white/5 hover:bg-red-500/20 rounded-2xl transition-colors"><Trash2 size={20} /></button>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               ) : currentView === View.PLAYLISTS ? (
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-8">
                   {isCreatingPlaylist ? (
-                    <div className="aspect-[4/5] glass rounded-[2.5rem] p-8 flex flex-col justify-center border-2 border-blue-500/30">
-                      <input autoFocus type="text" placeholder="Name..." value={newPlaylistName} onChange={(e) => setNewPlaylistName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreatePlaylist()} className="bg-white/10 outline-none rounded-xl p-3 mb-4 border border-white/10" />
+                    <div className="aspect-[4/5] glass rounded-[2.5rem] p-8 flex flex-col justify-center border-2 border-blue-500/30 animate-in zoom-in duration-200">
+                      <input autoFocus type="text" placeholder="Name..." value={newPlaylistName} onChange={(e) => setNewPlaylistName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreatePlaylist()} className="bg-white/10 outline-none rounded-xl p-3 mb-4 border border-white/10 focus:border-blue-400" />
                       <div className="flex gap-2">
-                        <button onClick={handleCreatePlaylist} className="flex-1 bg-blue-600 p-3 rounded-xl font-bold">Save</button>
-                        <button onClick={() => setIsCreatingPlaylist(false)} className="bg-white/10 p-3 rounded-xl"><X size={18} /></button>
+                        <button onClick={handleCreatePlaylist} className="flex-1 bg-blue-600 p-3 rounded-xl font-bold hover:bg-blue-500 transition-colors">Save</button>
+                        <button onClick={() => setIsCreatingPlaylist(false)} className="bg-white/10 p-3 rounded-xl hover:bg-white/20 transition-colors"><X size={18} /></button>
                       </div>
                     </div>
                   ) : (
                     <button onClick={() => setIsCreatingPlaylist(true)} className="aspect-[4/5] glass-dark rounded-[2.5rem] flex flex-col items-center justify-center gap-4 hover:bg-white/10 transition-all border-2 border-dashed border-white/10 group">
-                      <Plus size={40} className="text-white/20 group-hover:scale-110 transition-transform" />
-                      <span className="font-bold text-lg text-white/50">Create Playlist</span>
+                      <Plus size={40} className="text-white/20 group-hover:scale-110 group-hover:text-blue-400 transition-all duration-300" />
+                      <span className="font-bold text-lg text-white/50 group-hover:text-white transition-colors">Create Playlist</span>
                     </button>
                   )}
                   {playlists.map(playlist => (
-                    <div key={playlist.id} onClick={() => { setSelectedPlaylistId(playlist.id); setCurrentView(View.PLAYLIST_DETAIL); }} className="aspect-[4/5] glass-dark rounded-[2.5rem] p-8 group cursor-pointer hover:bg-white/10 transition-all relative overflow-hidden">
-                      <div className="absolute inset-0 p-8 flex flex-col justify-end bg-gradient-to-t from-black/60 to-transparent">
+                    <div key={playlist.id} onClick={() => { setSelectedPlaylistId(playlist.id); setCurrentView(View.PLAYLIST_DETAIL); }} className="aspect-[4/5] glass-dark rounded-[2.5rem] p-8 group cursor-pointer hover:bg-white/10 transition-all relative overflow-hidden border border-white/5 shadow-xl">
+                      <div className="absolute inset-0 p-8 flex flex-col justify-end bg-gradient-to-t from-black/80 to-transparent">
                         <h3 className="font-extrabold text-2xl truncate mb-1">{playlist.name}</h3>
                         <p className="text-sm font-bold text-blue-400 uppercase tracking-widest">{playlist.songIds.length} tracks</p>
                       </div>
-                      <button onClick={async (e) => { e.stopPropagation(); if(confirm('Delete playlist?')) { await dbService.deletePlaylist(playlist.id); loadData(); } }} className="absolute top-6 right-6 p-3 bg-black/20 hover:bg-red-500 rounded-2xl opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={18} /></button>
+                      <button onClick={async (e) => { e.stopPropagation(); if(confirm('Delete playlist?')) { await dbService.deletePlaylist(playlist.id); loadData(); } }} className="absolute top-6 right-6 p-3 bg-black/40 hover:bg-red-500 rounded-2xl md:opacity-0 group-hover:opacity-100 transition-all backdrop-blur-lg"><Trash2 size={18} /></button>
                     </div>
                   ))}
                 </div>
               ) : (
                 <div className="max-w-3xl space-y-6">
+                  {folders.length === 0 && (
+                    <div className="py-20 text-center opacity-20 border-2 border-dashed border-white/10 rounded-3xl">
+                      <FolderPlus size={60} className="mx-auto mb-4" />
+                      <p className="font-bold">No music folders added</p>
+                    </div>
+                  )}
                   {folders.map(folder => (
-                    <div key={folder.id} className="bg-white/5 p-5 rounded-3xl flex items-center justify-between border border-white/5 group">
+                    <div key={folder.id} className="bg-white/5 p-6 rounded-3xl flex items-center justify-between border border-white/5 hover:border-white/20 transition-all group">
                       <div className="flex items-center gap-5">
-                        <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-400"><FolderPlus size={28} /></div>
+                        <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-400 shadow-inner"><FolderPlus size={28} /></div>
                         <div><h4 className="font-bold text-lg leading-none">{folder.name}</h4><p className="text-sm text-white/30 mt-2 font-medium">Local Path Indexed</p></div>
                       </div>
-                      <button onClick={async () => { if(confirm('Unindex this folder?')) { await dbService.deleteFolder(folder.id); const songsToRemove = songs.filter(s => s.folderId === folder.id); for (const s of songsToRemove) await dbService.deleteSong(s.id); loadData(); } }} className="p-4 hover:bg-red-500/20 text-white/20 hover:text-red-400 rounded-2xl transition-all"><Trash2 size={24} /></button>
+                      <button onClick={async () => { if(confirm('Unindex this folder? Songs will be removed from library.')) { try { await dbService.deleteFolder(folder.id); const songsToRemove = songs.filter(s => s.folderId === folder.id); for (const s of songsToRemove) await dbService.deleteSong(s.id); await loadData(); } catch(e) { console.error(e); } } }} className="p-4 hover:bg-red-500/20 text-white/20 hover:text-red-400 rounded-2xl transition-all"><Trash2 size={24} /></button>
                     </div>
                   ))}
                 </div>
@@ -371,36 +408,36 @@ const App: React.FC = () => {
           <div className="w-full max-w-7xl mx-auto flex items-center justify-between gap-10">
             <div className="flex items-center gap-6 w-1/3 min-w-0">
               <div className="w-16 h-16 glass rounded-2xl flex items-center justify-center overflow-hidden flex-shrink-0 relative border border-white/10 shadow-2xl">
-                <Music size={28} className="text-white" />
+                <Music size={28} className="text-white group-hover:scale-110 transition-transform" />
               </div>
               <div className="min-w-0">
                 <h4 className="font-extrabold truncate text-lg leading-tight">{currentSong?.name || 'Lumina Music'}</h4>
-                <p className="text-sm text-white/40 truncate mt-1">{currentSong?.artist || 'Ready to play'}</p>
+                <p className="text-sm text-white/40 truncate mt-1 font-medium">{currentSong?.artist || 'Ready to play'}</p>
               </div>
             </div>
 
             <div className="flex flex-col items-center flex-1 max-w-xl">
               <div className="flex items-center gap-8 mb-3">
-                <button onClick={() => setIsShuffle(!isShuffle)} className={`transition-all ${isShuffle ? 'text-blue-400' : 'text-white/20 hover:text-white'}`}><Shuffle size={20} /></button>
-                <button onClick={playPrev} className="text-white/60 hover:text-white"><SkipBack size={32} fill="currentColor" /></button>
+                <button onClick={() => setIsShuffle(!isShuffle)} className={`transition-all hover:scale-110 ${isShuffle ? 'text-blue-400 drop-shadow-[0_0_8px_rgba(59,130,246,0.6)]' : 'text-white/20 hover:text-white'}`}><Shuffle size={20} /></button>
+                <button onClick={playPrev} className="text-white/60 hover:text-white hover:scale-110 transition-all"><SkipBack size={32} fill="currentColor" /></button>
                 <button onClick={togglePlay} className="w-16 h-16 bg-white text-black rounded-full flex items-center justify-center hover:scale-110 active:scale-95 transition-all shadow-[0_0_30px_rgba(255,255,255,0.3)]">
                   {isPlaying ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-1" />}
                 </button>
-                <button onClick={playNext} className="text-white/60 hover:text-white"><SkipForward size={32} fill="currentColor" /></button>
-                <button onClick={() => setIsRepeat(!isRepeat)} className={`transition-all ${isRepeat ? 'text-blue-400' : 'text-white/20 hover:text-white'}`}><Repeat size={20} /></button>
+                <button onClick={playNext} className="text-white/60 hover:text-white hover:scale-110 transition-all"><SkipForward size={32} fill="currentColor" /></button>
+                <button onClick={() => setIsRepeat(!isRepeat)} className={`transition-all hover:scale-110 ${isRepeat ? 'text-blue-400 drop-shadow-[0_0_8px_rgba(59,130,246,0.6)]' : 'text-white/20 hover:text-white'}`}><Repeat size={20} /></button>
               </div>
               <div className="w-full flex items-center gap-5">
-                <span className="text-[11px] font-bold text-white/30 w-12 text-right">{audioRef.current ? new Date(audioRef.current.currentTime * 1000).toISOString().substring(14, 19) : '0:00'}</span>
-                <div className="flex-1 h-2 bg-white/10 rounded-full cursor-pointer relative" onClick={(e) => { if (audioRef.current) { const rect = e.currentTarget.getBoundingClientRect(); const pos = (e.clientX - rect.left) / rect.width; audioRef.current.currentTime = pos * audioRef.current.duration; } }}>
-                  <div className="absolute h-full bg-blue-500 rounded-full shadow-[0_0_15px_rgba(59,130,246,0.6)]" style={{ width: `${progress}%` }}></div>
+                <span className="text-[11px] font-bold text-white/30 w-12 text-right tracking-tighter">{audioRef.current ? new Date(audioRef.current.currentTime * 1000).toISOString().substring(14, 19) : '0:00'}</span>
+                <div className="flex-1 h-2 bg-white/10 rounded-full cursor-pointer relative overflow-hidden" onClick={(e) => { if (audioRef.current) { const rect = e.currentTarget.getBoundingClientRect(); const pos = (e.clientX - rect.left) / rect.width; audioRef.current.currentTime = pos * audioRef.current.duration; } }}>
+                  <div className="absolute h-full bg-blue-500 rounded-full shadow-[0_0_15px_rgba(59,130,246,0.6)] transition-all duration-100 ease-linear" style={{ width: `${progress}%` }}></div>
                 </div>
-                <span className="text-[11px] font-bold text-white/30 w-12">{audioRef.current && audioRef.current.duration ? new Date(audioRef.current.duration * 1000).toISOString().substring(14, 19) : '0:00'}</span>
+                <span className="text-[11px] font-bold text-white/30 w-12 tracking-tighter">{audioRef.current && audioRef.current.duration ? new Date(audioRef.current.duration * 1000).toISOString().substring(14, 19) : '0:00'}</span>
               </div>
             </div>
 
             <div className="flex items-center gap-5 w-1/3 justify-end hidden md:flex">
               <Volume2 size={22} className="text-white/20" />
-              <input type="range" min="0" max="1" step="0.01" value={volume} onChange={(e) => { const v = parseFloat(e.target.value); setVolume(v); if (audioRef.current) audioRef.current.volume = v; }} className="w-32 accent-white bg-white/10 h-1.5 rounded-full appearance-none cursor-pointer" />
+              <input type="range" min="0" max="1" step="0.01" value={volume} onChange={(e) => { const v = parseFloat(e.target.value); setVolume(v); if (audioRef.current) audioRef.current.volume = v; }} className="w-32 accent-white bg-white/10 h-1.5 rounded-full appearance-none cursor-pointer hover:bg-white/20 transition-all" />
             </div>
           </div>
         </footer>
@@ -421,7 +458,7 @@ const App: React.FC = () => {
             {/* Playlist List */}
             <div className="px-6 pb-6 max-h-[50vh] overflow-y-auto space-y-2 scrollbar-thin">
               {playlists.length === 0 && !isCreatingPlaylist && (
-                <div className="py-12 text-center text-white/20 italic">No playlists created yet</div>
+                <div className="py-12 text-center text-white/20 italic font-medium">No playlists created yet</div>
               )}
               {playlists.map(p => (
                 <button 
@@ -430,7 +467,7 @@ const App: React.FC = () => {
                   className="w-full flex items-center justify-between p-4 rounded-2xl bg-white/5 hover:bg-blue-600/30 border border-transparent hover:border-blue-500/30 transition-all group"
                 >
                   <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center group-hover:bg-blue-500/20">
+                    <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
                       <ListMusic size={18} className="text-white/40 group-hover:text-white" />
                     </div>
                     <span className="font-bold text-lg text-white/80 group-hover:text-white">{p.name}</span>
