@@ -19,7 +19,9 @@ import {
   MoreVertical,
   Music,
   X,
-  Check
+  Check,
+  MinusCircle,
+  AlertTriangle
 } from 'lucide-react';
 import { Song, Playlist, FolderSource, View } from './types';
 import { dbService } from './db';
@@ -32,6 +34,7 @@ const App: React.FC = () => {
   const [folders, setFolders] = useState<FolderSource[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddingToPlaylist, setIsAddingToPlaylist] = useState<string | null>(null);
+  const [playlistToDelete, setPlaylistToDelete] = useState<Playlist | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   
   // Playlist Creation State
@@ -49,7 +52,7 @@ const App: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Derived state (moved up to be accessible everywhere)
+  // Derived state
   const filteredSongs = songs.filter(s => 
     s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     (s.artist && s.artist.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -208,10 +211,65 @@ const App: React.FC = () => {
     }
   };
 
+  const removeFromPlaylist = async (songId: string) => {
+    if (!selectedPlaylistId) return;
+    try {
+      const playlist = playlists.find(p => p.id === selectedPlaylistId);
+      if (playlist) {
+        playlist.songIds = playlist.songIds.filter(id => id !== songId);
+        await dbService.savePlaylist(playlist);
+        await loadData();
+      }
+    } catch (err) {
+      console.error("Error removing from playlist:", err);
+    }
+  };
+
+  const handleConfirmedPlaylistDelete = async (deleteSongs: boolean) => {
+    if (!playlistToDelete) return;
+    try {
+      const pId = playlistToDelete.id;
+      const pSongIds = [...playlistToDelete.songIds];
+
+      // 1. Delete the playlist entry
+      await dbService.deletePlaylist(pId);
+
+      // 2. If requested, delete the songs from library
+      if (deleteSongs) {
+        for (const sid of pSongIds) {
+          await dbService.deleteSong(sid);
+          // Also clean up from other playlists if they happen to share this song
+          for (const otherP of playlists) {
+            if (otherP.id !== pId && otherP.songIds.includes(sid)) {
+              otherP.songIds = otherP.songIds.filter(id => id !== sid);
+              await dbService.savePlaylist(otherP);
+            }
+          }
+        }
+      }
+
+      await loadData();
+      setPlaylistToDelete(null);
+      if (selectedPlaylistId === pId) {
+        setCurrentView(View.PLAYLISTS);
+        setSelectedPlaylistId(null);
+      }
+    } catch (err) {
+      console.error("Playlist deletion failed:", err);
+    }
+  };
+
   const removeSongFromLibrary = async (id: string) => {
-    if (confirm('Remove this song from your local library?')) {
+    if (confirm('Permanently remove this song from library? It will be removed from all playlists as well.')) {
       try {
         await dbService.deleteSong(id);
+        // Also clean up playlists
+        for (const playlist of playlists) {
+          if (playlist.songIds.includes(id)) {
+            playlist.songIds = playlist.songIds.filter(sid => sid !== id);
+            await dbService.savePlaylist(playlist);
+          }
+        }
         await loadData();
       } catch (err) {
         console.error("Delete failed:", err);
@@ -249,7 +307,7 @@ const App: React.FC = () => {
               <div className="w-12 h-12 bg-gradient-to-tr from-blue-600 to-purple-500 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/20">
                 <Music size={28} className="text-white" />
               </div>
-              <div className="hidden md:block">
+              <div className="hidden md:block text-left">
                 <h1 className="font-bold text-xl tracking-tight leading-none text-white">Lumina</h1>
                 <p className="text-[10px] text-white/40 uppercase tracking-widest mt-1">Music Player</p>
               </div>
@@ -293,7 +351,7 @@ const App: React.FC = () => {
 
           {/* Main Area */}
           <main className="flex-1 flex flex-col overflow-hidden bg-black/5">
-            <header className="p-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <header className="p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 text-left">
               <div>
                 <h2 className="text-4xl font-extrabold tracking-tight">
                   {currentView === View.LIBRARY && 'My Library'}
@@ -346,8 +404,31 @@ const App: React.FC = () => {
                           <p className="text-sm text-white/40 truncate">{song.path.split('/').slice(0,-1).join(' / ') || 'Root'}</p>
                         </div>
                         <div className="flex items-center gap-3 md:opacity-0 group-hover:opacity-100 transition-all">
-                          <button onClick={(e) => { e.stopPropagation(); setIsAddingToPlaylist(song.id); }} className="p-3 bg-white/5 hover:bg-blue-500/20 rounded-2xl transition-colors"><Plus size={20} /></button>
-                          <button onClick={(e) => { e.stopPropagation(); removeSongFromLibrary(song.id); }} className="p-3 bg-white/5 hover:bg-red-500/20 rounded-2xl transition-colors"><Trash2 size={20} /></button>
+                          <button 
+                            title="Add to another playlist"
+                            onClick={(e) => { e.stopPropagation(); setIsAddingToPlaylist(song.id); }} 
+                            className="p-3 bg-white/5 hover:bg-blue-500/20 rounded-2xl transition-colors"
+                          >
+                            <Plus size={20} />
+                          </button>
+                          
+                          {currentView === View.PLAYLIST_DETAIL && (
+                            <button 
+                              title="Remove from this playlist"
+                              onClick={(e) => { e.stopPropagation(); removeFromPlaylist(song.id); }} 
+                              className="p-3 bg-white/5 hover:bg-orange-500/20 rounded-2xl transition-colors text-orange-400"
+                            >
+                              <MinusCircle size={20} />
+                            </button>
+                          )}
+
+                          <button 
+                            title="Delete from Library"
+                            onClick={(e) => { e.stopPropagation(); removeSongFromLibrary(song.id); }} 
+                            className="p-3 bg-white/5 hover:bg-red-500/20 rounded-2xl transition-colors text-red-400"
+                          >
+                            <Trash2 size={20} />
+                          </button>
                         </div>
                       </div>
                     ))
@@ -375,7 +456,15 @@ const App: React.FC = () => {
                         <h3 className="font-extrabold text-2xl truncate mb-1 text-left">{playlist.name}</h3>
                         <p className="text-sm font-bold text-blue-400 uppercase tracking-widest text-left">{playlist.songIds.length} tracks</p>
                       </div>
-                      <button onClick={async (e) => { e.stopPropagation(); if(confirm('Delete playlist?')) { await dbService.deletePlaylist(playlist.id); loadData(); } }} className="absolute top-6 right-6 p-3 bg-black/40 hover:bg-red-500 rounded-2xl md:opacity-0 group-hover:opacity-100 transition-all backdrop-blur-lg"><Trash2 size={18} /></button>
+                      <button 
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          setPlaylistToDelete(playlist);
+                        }} 
+                        className="absolute top-6 right-6 p-3 bg-black/40 hover:bg-red-500 rounded-2xl md:opacity-0 group-hover:opacity-100 transition-all backdrop-blur-lg z-30"
+                      >
+                        <Trash2 size={18} />
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -430,7 +519,7 @@ const App: React.FC = () => {
                 <div className="flex-1 h-2 bg-white/10 rounded-full cursor-pointer relative overflow-hidden" onClick={(e) => { if (audioRef.current) { const rect = e.currentTarget.getBoundingClientRect(); const pos = (e.clientX - rect.left) / rect.width; audioRef.current.currentTime = pos * audioRef.current.duration; } }}>
                   <div className="absolute h-full bg-blue-500 rounded-full shadow-[0_0_15px_rgba(59,130,246,0.6)] transition-all duration-100 ease-linear" style={{ width: `${progress}%` }}></div>
                 </div>
-                <span className="text-[11px] font-bold text-white/30 w-12 tracking-tighter">{audioRef.current && audioRef.current.duration ? new Date(audioRef.current.duration * 1000).toISOString().substring(14, 19) : '0:00'}</span>
+                <span className="text-[11px] font-bold text-white/30 w-12 tracking-tighter text-left">{audioRef.current && audioRef.current.duration ? new Date(audioRef.current.duration * 1000).toISOString().substring(14, 19) : '0:00'}</span>
               </div>
             </div>
 
@@ -444,7 +533,7 @@ const App: React.FC = () => {
 
       {/* MODAL: ADD TO PLAYLIST */}
       {isAddingToPlaylist && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 backdrop-blur-3xl bg-black/40 animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 backdrop-blur-3xl bg-black/40 animate-in fade-in duration-300 text-left">
           <div className="glass-dark w-full max-w-md rounded-[2.5rem] p-0 overflow-hidden border border-white/20 shadow-2xl animate-in zoom-in duration-300">
             {/* Modal Header */}
             <div className="p-8 pb-4 flex items-center justify-between">
@@ -516,6 +605,47 @@ const App: React.FC = () => {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: DELETE PLAYLIST CONFIRMATION */}
+      {playlistToDelete && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 backdrop-blur-3xl bg-black/60 animate-in fade-in duration-300">
+          <div className="glass-dark w-full max-w-lg rounded-[2.5rem] p-10 overflow-hidden border border-white/20 shadow-[0_0_100px_rgba(239,68,68,0.2)] animate-in zoom-in duration-300 text-center">
+            <div className="w-20 h-20 bg-red-500/10 rounded-3xl flex items-center justify-center text-red-500 mx-auto mb-8 shadow-inner shadow-red-500/20">
+              <AlertTriangle size={40} />
+            </div>
+            
+            <h3 className="text-3xl font-extrabold tracking-tight mb-4">Delete Playlist?</h3>
+            <p className="text-white/50 text-lg mb-10 font-medium px-4 leading-relaxed">
+              How do you want to delete <span className="text-white font-bold">"{playlistToDelete.name}"</span>? 
+              Removing songs from library will permanently delete them from all other playlists too.
+            </p>
+
+            <div className="space-y-4">
+              <button 
+                onClick={() => handleConfirmedPlaylistDelete(false)}
+                className="w-full bg-white/5 hover:bg-white/10 p-5 rounded-2xl font-bold text-lg transition-all border border-white/5 hover:border-white/20 shadow-xl"
+              >
+                Delete Playlist Only
+              </button>
+              
+              <button 
+                onClick={() => handleConfirmedPlaylistDelete(true)}
+                className="w-full bg-red-600 hover:bg-red-500 p-5 rounded-2xl font-bold text-lg transition-all shadow-lg shadow-red-600/30 flex items-center justify-center gap-3"
+              >
+                <Trash2 size={22} />
+                Delete Playlist & All Songs
+              </button>
+
+              <button 
+                onClick={() => setPlaylistToDelete(null)}
+                className="w-full p-4 text-white/30 hover:text-white transition-colors font-semibold"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
