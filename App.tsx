@@ -121,7 +121,6 @@ const App: React.FC = () => {
       }
     } catch (err) {
       console.error("Error scanning files:", err);
-      alert("Could not index all files. Please try again.");
     } finally {
       setIsScanning(false);
       e.target.value = '';
@@ -183,7 +182,7 @@ const App: React.FC = () => {
       const currentIndex = list.findIndex(s => s.id === currentSong?.id);
       nextIndex = (currentIndex + 1) % list.length;
     }
-    playSong(list[nextIndex]);
+    if (list[nextIndex]) playSong(list[nextIndex]);
   }, [displaySongs, currentSong, isShuffle]);
 
   const playPrev = () => {
@@ -192,7 +191,7 @@ const App: React.FC = () => {
     const currentIndex = list.findIndex(s => s.id === currentSong?.id);
     let prevIndex = currentIndex - 1;
     if (prevIndex < 0) prevIndex = list.length - 1;
-    playSong(list[prevIndex]);
+    if (list[prevIndex]) playSong(list[prevIndex]);
   };
 
   const addToPlaylist = async (songId: string, playlistId: string) => {
@@ -342,7 +341,7 @@ const App: React.FC = () => {
                             <div className="flex items-end gap-1 h-5"><div className="w-1 bg-blue-400 animate-[bounce_0.8s_infinite] h-full"></div></div>
                           ) : <Music size={24} className="text-white/20 group-hover:text-blue-400/50 transition-colors" />}
                         </div>
-                        <div className="flex-1 min-w-0">
+                        <div className="flex-1 min-w-0 text-left">
                           <h4 className="font-bold truncate text-lg">{song.name}</h4>
                           <p className="text-sm text-white/40 truncate">{song.path.split('/').slice(0,-1).join(' / ') || 'Root'}</p>
                         </div>
@@ -373,8 +372,8 @@ const App: React.FC = () => {
                   {playlists.map(playlist => (
                     <div key={playlist.id} onClick={() => { setSelectedPlaylistId(playlist.id); setCurrentView(View.PLAYLIST_DETAIL); }} className="aspect-[4/5] glass-dark rounded-[2.5rem] p-8 group cursor-pointer hover:bg-white/10 transition-all relative overflow-hidden border border-white/5 shadow-xl">
                       <div className="absolute inset-0 p-8 flex flex-col justify-end bg-gradient-to-t from-black/80 to-transparent">
-                        <h3 className="font-extrabold text-2xl truncate mb-1">{playlist.name}</h3>
-                        <p className="text-sm font-bold text-blue-400 uppercase tracking-widest">{playlist.songIds.length} tracks</p>
+                        <h3 className="font-extrabold text-2xl truncate mb-1 text-left">{playlist.name}</h3>
+                        <p className="text-sm font-bold text-blue-400 uppercase tracking-widest text-left">{playlist.songIds.length} tracks</p>
                       </div>
                       <button onClick={async (e) => { e.stopPropagation(); if(confirm('Delete playlist?')) { await dbService.deletePlaylist(playlist.id); loadData(); } }} className="absolute top-6 right-6 p-3 bg-black/40 hover:bg-red-500 rounded-2xl md:opacity-0 group-hover:opacity-100 transition-all backdrop-blur-lg"><Trash2 size={18} /></button>
                     </div>
@@ -392,7 +391,7 @@ const App: React.FC = () => {
                     <div key={folder.id} className="bg-white/5 p-6 rounded-3xl flex items-center justify-between border border-white/5 hover:border-white/20 transition-all group">
                       <div className="flex items-center gap-5">
                         <div className="w-14 h-14 bg-blue-500/10 rounded-2xl flex items-center justify-center text-blue-400 shadow-inner"><FolderPlus size={28} /></div>
-                        <div><h4 className="font-bold text-lg leading-none">{folder.name}</h4><p className="text-sm text-white/30 mt-2 font-medium">Local Path Indexed</p></div>
+                        <div className="text-left"><h4 className="font-bold text-lg leading-none">{folder.name}</h4><p className="text-sm text-white/30 mt-2 font-medium">Local Path Indexed</p></div>
                       </div>
                       <button onClick={async () => { if(confirm('Unindex this folder? Songs will be removed from library.')) { try { await dbService.deleteFolder(folder.id); const songsToRemove = songs.filter(s => s.folderId === folder.id); for (const s of songsToRemove) await dbService.deleteSong(s.id); await loadData(); } catch(e) { console.error(e); } } }} className="p-4 hover:bg-red-500/20 text-white/20 hover:text-red-400 rounded-2xl transition-all"><Trash2 size={24} /></button>
                     </div>
@@ -406,7 +405,7 @@ const App: React.FC = () => {
         {/* Player Bar */}
         <footer className="h-28 glass-dark border-t border-white/10 flex items-center px-8 md:px-12 z-20 backdrop-blur-3xl shrink-0">
           <div className="w-full max-w-7xl mx-auto flex items-center justify-between gap-10">
-            <div className="flex items-center gap-6 w-1/3 min-w-0">
+            <div className="flex items-center gap-6 w-1/3 min-w-0 text-left">
               <div className="w-16 h-16 glass rounded-2xl flex items-center justify-center overflow-hidden flex-shrink-0 relative border border-white/10 shadow-2xl">
                 <Music size={28} className="text-white group-hover:scale-110 transition-transform" />
               </div>
@@ -466,7 +465,7 @@ const App: React.FC = () => {
                   onClick={() => addToPlaylist(isAddingToPlaylist, p.id)}
                   className="w-full flex items-center justify-between p-4 rounded-2xl bg-white/5 hover:bg-blue-600/30 border border-transparent hover:border-blue-500/30 transition-all group"
                 >
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-4 text-left">
                     <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
                       <ListMusic size={18} className="text-white/40 group-hover:text-white" />
                     </div>
@@ -480,7 +479,7 @@ const App: React.FC = () => {
 
               {isCreatingPlaylist && (
                 <div className="bg-blue-600/10 p-5 rounded-3xl border border-blue-500/40 animate-in slide-in-from-top-4 duration-300">
-                  <p className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-3">Create New</p>
+                  <p className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-3 text-left">Create New</p>
                   <input 
                     autoFocus
                     type="text"
