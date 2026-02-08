@@ -1,0 +1,5 @@
+{
+  "name": "Lumina Music Player",
+  "description": "A high-end, glassmorphic music player that organizes your local library using Apple's design principles and local storage.",
+  "requestFramePermissions": []
+}
